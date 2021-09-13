@@ -71,12 +71,12 @@ parser.add_argument('--gpu', type=int, default=0)
 args = parser.parse_args()
 print(args)
 os.environ["CUDA_VISIBLE_DEVICES"] = "%d" % args.gpu
-set_seed(args)
+
 def set_seed(args):
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-
+set_seed(args)
 def eval_running_model(dataloader, test=False):
     model.eval()
     eval_loss, eval_hit_times = 0, 0
