@@ -31,7 +31,7 @@ parser.add_argument("--bert_model", default='/search/odin/guobk/data/data_polyEn
 parser.add_argument("--eval", action="store_true")
 parser.add_argument("--model_type", default='bert', type=str)
 parser.add_argument("--output_dir", default='/search/odin/guobk/data/data_polyEncode/vpa/model_small_all', type=str)
-parser.add_argument("--train_dir", default='data/ubuntu_data', type=str)
+parser.add_argument("--train_dir", default='/search/odin/guobk/data/data_polyEncode/vpa/train_data_all/', type=str)
 
 parser.add_argument("--use_pretrain", action="store_true")
 parser.add_argument("--architecture", default='poly', type=str, help='[poly, bi, cross]')
@@ -70,7 +70,7 @@ parser.add_argument(
 parser.add_argument('--gpu', type=int, default=0)
 args = parser.parse_args()
 print(args)
-os.environ["CUDA_VISIBLE_DEVICES"] = "%d" % args.gpu
+
 
 def set_seed(args):
     random.seed(args.seed)
@@ -138,10 +138,45 @@ def eval_running_model(dataloader, test=False):
         }
 
     return result
+class Tokenizer(object):
+    def __init__(self,path_vocab,do_lower_case):
+        with open(path_vocab,'r') as f:
+            self.vocab = f.read().strip().split('\n')
+        self.vocab = {self.vocab[k]:k for k in range(len(self.vocab))}
+        self.do_lower_case = do_lower_case
+    def token_to_ids(self,text,max_len,is_context=True):
+        if type(text)==str:
+            text = text.strip()
+            if self.do_lower_case:
+                text = text.lower()
+            res = [self.vocab['[CLS]']]
+            for i in range(min(max_len-2,len(text))):
+                if text[i] not in self.vocab:
+                    res.append(self.vocab['[MASK]'])
+                else:
+                    res.append(self.vocab[text[i]])
+            res.append(self.vocab['[SEP]'])
+            segIds = []
+            segIds = [1 for _ in range(len(res))]
+            segIds = segIds+[0]*(max_len-len(segIds))
+            res = res[:max_len]
+            res = res + [0]*(max_len-len(res))
+            tokenIds = res
+            return tokenIds,segIds
+        else:
+            tokenIds,segIds = [], []
+            for t in text:
+                res = self.token_to_ids(t, max_len)
+                tokenIds.append(res[0])
+                segIds.append(res[1])
+        return tokenIds,segIds
+def testLoader(queries, Docs, mytokenzier):
+    Context_ids, Context_msk = mytokenizer.token_to_ids(queries,max_len=args.max_contexts_length)
+    Response_ids, Response_msk = mytokenizer.token_to_ids(Docs,max_len=args.max_response_length)
 
 
 if __name__ == '__main__':
-    
+
     MODEL_CLASSES = {
         'bert': (BertConfig, BertTokenizerFast, BertModel),
     }
@@ -158,32 +193,6 @@ if __name__ == '__main__':
     print('Output dir:', args.output_dir)
     print('=' * 80)
 
-    if not args.eval:
-        train_dataset = SelectionDataset(os.path.join(args.train_dir, 'train.txt'),
-                                                                      context_transform, response_transform, concat_transform, sample_cnt=None, mode=args.architecture)
-        val_dataset = SelectionDataset(os.path.join(args.train_dir, 'dev.txt'),
-                                                                  context_transform, response_transform, concat_transform, sample_cnt=1000, mode=args.architecture)
-        train_dataloader = DataLoader(train_dataset, batch_size=args.train_batch_size, collate_fn=train_dataset.batchify_join_str, shuffle=True, num_workers=0)
-        t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
-    else: # test
-        val_dataset = SelectionDataset(os.path.join(args.train_dir, 'test.txt'),
-                                                                  context_transform, response_transform, concat_transform, sample_cnt=None, mode=args.architecture)
-
-    val_dataloader = DataLoader(val_dataset, batch_size=args.eval_batch_size, collate_fn=val_dataset.batchify_join_str, shuffle=False, num_workers=0)
-
-
-    epoch_start = 1
-    global_step = 0
-    best_eval_loss = float('inf')
-    best_test_loss = float('inf')
-
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-    shutil.copyfile(os.path.join(args.bert_model, 'vocab.txt'), os.path.join(args.output_dir, 'vocab.txt'))
-    shutil.copyfile(os.path.join(args.bert_model, 'config.json'), os.path.join(args.output_dir, 'config.json'))
-    log_wf = open(os.path.join(args.output_dir, 'log.txt'), 'a', encoding='utf-8')
-    print (args, file=log_wf)
-
     state_save_path = os.path.join(args.output_dir, '{}_{}_pytorch_model.bin'.format(args.architecture, args.poly_m))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -191,15 +200,7 @@ if __name__ == '__main__':
     ## build BERT encoder
     ########################################
     bert_config = ConfigClass.from_json_file(os.path.join(args.bert_model, 'config.json'))
-    if args.use_pretrain and not args.eval:
-        previous_model_file = os.path.join(args.bert_model, "pytorch_model.bin")
-        print('Loading parameters from', previous_model_file)
-        log_wf.write('Loading parameters from %s' % previous_model_file + '\n')
-        model_state_dict = torch.load(previous_model_file, map_location="cpu")
-        bert = BertModelClass.from_pretrained(args.bert_model, state_dict=model_state_dict)
-        del model_state_dict
-    else:
-        bert = BertModelClass(bert_config)
+    bert = BertModelClass(bert_config)
 
     if args.architecture == 'poly':
         model = PolyEncoder(bert_config, bert=bert, poly_m=args.poly_m)
@@ -211,111 +212,47 @@ if __name__ == '__main__':
         raise Exception('Unknown architecture.')
     model.resize_token_embeddings(len(tokenizer)) 
     model.to(device)
-    
-    if args.eval:
-        print('Loading parameters from', state_save_path)
-        model.load_state_dict(torch.load(state_save_path))
-        test_result = eval_running_model(val_dataloader, test=True)
-        print (test_result)
-        exit()
+
+    print('Loading parameters from', state_save_path)
+    model.load_state_dict(torch.load(state_save_path))
+
+    mytokenizer = Tokenizer(path_vocab=os.path.join(args.bert_model, "vocab.txt"),do_lower_case = True)
+
+    with open('/search/odin/guobk/data/vpaSupData/Docs-0809.json','r') as f:
+        Docs = json.load(f)
+    with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec.json','r') as f:
+        Queries = json.load(f)
+    Docs = [d['content'] for d in Docs]
+    Queries = [d['input'] for d in Queries]
+    Context_ids, Context_msk = mytokenizer.token_to_ids(Queries,max_len=args.max_contexts_length)
+    Response_ids, Response_msk = mytokenizer.token_to_ids(Docs,max_len=args.max_response_length)
+    Response_ids, Response_msk = np.array(Response_ids), np.array(Response_msk)
+    Response_ids, Response_msk = np.expand_dims(Response_ids,axis=0), np.expand_dims(Response_msk,axis=0)
+    Response_ids, Response_msk = torch.from_numpy(Response_ids).to(device), torch.from_numpy(Response_msk).to(device)
+    batch_size = 100
+    Res = []
+    for step in range(16, len(Context_ids)):
+        context_ids = Context_ids[step]
+        context_msk = Context_msk[step]
+        context_ids, context_msk = np.array(context_ids), np.array(context_msk)
+        context_ids, context_msk = np.expand_dims(context_ids,axis=0), np.expand_dims(context_msk,axis=0)
+        context_ids, context_msk = torch.from_numpy(context_ids).to(device), torch.from_numpy(context_msk).to(device)
+        ii = 0
+        r = []
+        while ii<Response_ids.shape[1]:
+            response_ids = Response_ids[:,ii:(ii+batch_size),:]
+            response_msk = Response_msk[:,ii:(ii+batch_size),:]
+            sims = model(context_ids,context_msk, response_ids, response_msk)
+            ii+=batch_size
+            r.extend(list(sims.cpu().detach().numpy()[0]))
+            print(step,ii)
+        R = [[Docs[i],r[i]] for i in range(len(r))]
+        R = sorted(R,key=lambda x:-x[-1])
+        R = [d[0]+'\t'+str(d[1]) for d in R[:10]]
+        Res.append({'input':Queries[step],'rec_poly':R})
+        with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-poly.json','w') as f:
+            json.dump(Res,f,ensure_ascii=False,indent=4)
+
+
+
         
-    no_decay = ["bias", "LayerNorm.weight"]
-    
-    optimizer_grouped_parameters = [
-        {
-            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-            "weight_decay": args.weight_decay,
-        },
-        {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
-    ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
-    )
-    if args.fp16:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
-
-    print_freq = args.print_freq//args.gradient_accumulation_steps
-    eval_freq = min(len(train_dataloader) // 2, 1000)
-    eval_freq = eval_freq//args.gradient_accumulation_steps
-    print('Print freq:', print_freq, "Eval freq:", eval_freq)
-
-    for epoch in range(epoch_start, int(args.num_train_epochs) + 1):
-        tr_loss = 0
-        nb_tr_steps = 0
-        with tqdm(total=len(train_dataloader)//args.gradient_accumulation_steps) as bar:
-            for step, batch in enumerate(train_dataloader):
-                model.train()
-                optimizer.zero_grad()
-                batch = tuple(t.to(device) for t in batch)
-                if args.architecture == 'cross':
-                    text_token_ids_list_batch, text_input_masks_list_batch, text_segment_ids_list_batch, labels_batch = batch
-                    loss = model(text_token_ids_list_batch, text_input_masks_list_batch, text_segment_ids_list_batch, labels_batch)
-                else:
-                    context_token_ids_list_batch, context_input_masks_list_batch, \
-                    response_token_ids_list_batch, response_input_masks_list_batch, labels_batch = batch
-                    loss = model(context_token_ids_list_batch, context_input_masks_list_batch,
-                                          response_token_ids_list_batch, response_input_masks_list_batch,
-                                          labels_batch)
-
-                loss = loss / args.gradient_accumulation_steps
-                
-                if args.fp16:
-                    with amp.scale_loss(loss, optimizer) as scaled_loss:
-                        scaled_loss.backward()
-                else:
-                    loss.backward()
-                
-                tr_loss += loss.item()
-
-                if (step + 1) % args.gradient_accumulation_steps == 0:
-                    if args.fp16:
-                        torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-                    else:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                    nb_tr_steps += 1
-                    optimizer.step()
-                    scheduler.step()
-                    model.zero_grad()
-                    global_step += 1
-
-                    if nb_tr_steps and nb_tr_steps % print_freq == 0:
-                        bar.update(min(print_freq, nb_tr_steps))
-                        time.sleep(0.02)
-                        print(global_step, tr_loss / nb_tr_steps)
-                        log_wf.write('%d\t%f\n' % (global_step, tr_loss / nb_tr_steps))
-
-                    if global_step and global_step % eval_freq == 0:
-                        # val_result = eval_running_model(val_dataloader)
-                        # print('Global Step %d VAL res:\n' % global_step, val_result)
-                        # log_wf.write('Global Step %d VAL res:\n' % global_step)
-                        # log_wf.write(str(val_result) + '\n')
-
-                        # if val_result['eval_loss'] < best_eval_loss:
-                        #     best_eval_loss = val_result['eval_loss']
-                        #     val_result['best_eval_loss'] = best_eval_loss
-                        #     # save model
-                        print('[Saving at]', state_save_path)
-                        log_wf.write('[Saving at] %s\n' % state_save_path)
-                        torch.save(model.state_dict(), state_save_path)
-                log_wf.flush()
-
-        # add a eval step after each epoch
-        # val_result = eval_running_model(val_dataloader)
-        # print('Epoch %d, Global Step %d VAL res:\n' % (epoch, global_step), val_result)
-        # log_wf.write('Global Step %d VAL res:\n' % global_step)
-        # log_wf.write(str(val_result) + '\n')
-
-        # if val_result['eval_loss'] < best_eval_loss:
-        #     best_eval_loss = val_result['eval_loss']
-        #     val_result['best_eval_loss'] = best_eval_loss
-        #     # save model
-        print('[Saving at]', state_save_path)
-        log_wf.write('[Saving at] %s\n' % state_save_path)
-        torch.save(model.state_dict(), state_save_path)
-        print(global_step, tr_loss / nb_tr_steps)
-        log_wf.write('%d\t%f\n' % (global_step, tr_loss / nb_tr_steps))
