@@ -30,7 +30,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--bert_model", default='/search/odin/guobk/data/data_polyEncode/vpa/model_small_all', type=str)
 parser.add_argument("--eval", action="store_true")
 parser.add_argument("--model_type", default='bert', type=str)
-parser.add_argument("--output_dir", required=True, type=str)
+parser.add_argument("--output_dir", default='/search/odin/guobk/data/data_polyEncode/vpa/model_small_all',required=True, type=str)
 parser.add_argument("--train_dir", default='data/ubuntu_data', type=str)
 
 parser.add_argument("--use_pretrain", action="store_true")
