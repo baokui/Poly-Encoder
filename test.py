@@ -231,7 +231,7 @@ if __name__ == '__main__':
     Response_ids, Response_msk = torch.from_numpy(Response_ids).to(device), torch.from_numpy(Response_msk).to(device)
     batch_size = 100
     Res = []
-    for step in range(16, len(Context_ids)):
+    for step in range(27,36):
         context_ids = Context_ids[step]
         context_msk = Context_msk[step]
         context_ids, context_msk = np.array(context_ids), np.array(context_msk)
@@ -250,9 +250,69 @@ if __name__ == '__main__':
         R = sorted(R,key=lambda x:-x[-1])
         R = [d[0]+'\t'+str(d[1]) for d in R[:10]]
         Res.append({'input':Queries[step],'rec_poly':R})
-        with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-poly.json','w') as f:
+        with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-poly-1.json','w') as f:
             json.dump(Res,f,ensure_ascii=False,indent=4)
 
-
-
-        
+def read_excel(path_source1,index=0):
+    import xlrd
+    workbook = xlrd.open_workbook(path_source1)  # 打开excel文件
+    sheets = workbook.sheets()
+    table = workbook.sheet_by_name(sheets[index].name)  # 将文件内容表格化
+    rows_num = table.nrows  # 获取行
+    cols_num = table.ncols  # 获取列
+    res = []  # 定义一个数组
+    for rows in range(rows_num):
+        r = []
+        for cols in range(cols_num):
+            r.append(table.cell(rows, cols).value)  # 获取excel中单元格的内容
+        res.append(r)
+    return res
+def write_excel(path_target,data,sheetname='Sheet1'):
+    import xlwt
+    # 创建一个workbook 设置编码
+    workbook = xlwt.Workbook(encoding='utf-8')
+    # 创建一个worksheet
+    worksheet = workbook.add_sheet(sheetname)
+    # 写入excel
+    # 参数对应 行, 列, 值
+    rows,cols = len(data),len(data[0])
+    for i in range(rows):
+        for j in range(cols):
+            worksheet.write(i, j, label=data[i][j])
+    # 保存
+    workbook.save(path_target)
+def test():
+    import json
+    with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-bert-com-test.json','r') as f:
+        D = json.load(f)
+    for i in range(len(D)):
+        for k in D[i]['rec']:
+            if D[i]['rec'][k]=='':
+                D[i]['rec'][k]='0'
+    with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-poly.json','r') as f:
+        T0 = json.load(f)
+    with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-poly-1.json','r') as f:
+        T1 = json.load(f)
+    T = T0+T1
+    for j in range(len(T)):
+        r = T[j]['rec_poly'][:5]
+        r = [t.split('\t')[0] for t in r]
+        for t in r:
+            if t not in D[j]['rec']:
+                D[j]['rec'][t] = ''
+    with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-bert-com-test-poly.json','w') as f:
+        json.dump(D,f,ensure_ascii=False,indent=4)
+    with open('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-bert-com-test-poly.json','r') as f:
+        S = json.load(f)
+    for s in S:
+        for k in s['rec']:
+            if s['rec'][k]=='':
+                s['rec'][k] = '0'
+    R = [['rec_polyEn','rec_polyEn-score']]
+    for j in range(len(T)):
+        r = T[j]['rec_poly'][:5]
+        r = [t.split('\t')[0] for t in r]
+        r = [[t,int(S[j]['rec'][t])] for t in r]
+        R.extend(r)
+        R.append(['',''])
+    write_excel('/search/odin/guobk/data/vpaSupData/Q-all-test-20210809-rec-bert-com-test-poly.xls', R)
